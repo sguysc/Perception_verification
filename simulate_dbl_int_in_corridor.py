@@ -117,16 +117,22 @@ class ClosedLoopModel():
 		
 		p_hit   = builder.AddSystem(RandomSource(distribution=RandomDistribution.kGaussian, num_outputs=2,\
 												 sampling_interval_sec=0.01))
+		p_hit.set_name("GaussionNoise(0,1)")
 		p_short = builder.AddSystem(RandomSource(distribution=RandomDistribution.kExponential, num_outputs=2,\
 												 sampling_interval_sec=0.01))
+		p_short.set_name("ExponentialNoise(1)")
 		#p_max   = builder.AddSystem(RandomSource(distribution=RandomDistribution.kUniform, num_outputs=1,\
 		#										 sampling_interval_sec=0.01))
 		p_rand  = builder.AddSystem(RandomSource(distribution=RandomDistribution.kUniform, num_outputs=2,\
 												 sampling_interval_sec=0.01))
+		p_rand.set_name("UniformNoise(0,1)")
 		#import pdb; pdb.set_trace()
 		p_hit_Dx = builder.AddSystem(Demultiplexer(size=2))
+		p_hit_Dx.set_name('Dmux1')
 		p_short_Dx = builder.AddSystem(Demultiplexer(size=2))
+		p_short_Dx.set_name('Dmux2')
 		p_rand_Dx = builder.AddSystem(Demultiplexer(size=2))
+		p_rand_Dx.set_name('Dmux3')
 		normgain_x = builder.AddSystem(Gain(k=normal_coeff, size=1))
 		normgain_x.set_name("Sigma_x")
 		normgain_y = builder.AddSystem(Gain(k=normal_coeff, size=1))
