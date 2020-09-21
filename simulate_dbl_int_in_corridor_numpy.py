@@ -18,9 +18,13 @@ import scipy.integrate as spi
 import scipy.interpolate as interpolate
 from scipy import stats
 
-from pydrake.all import LinearQuadraticRegulator
+#try:
+#	from pydrake.all import LinearQuadraticRegulator
+#except:
+#	# newer version of drake
+from pydrake.systems.controllers import LinearQuadraticRegulator
 
-# some behavior control switches
+# some behavioral control switches
 continuous = False
 bump_in_wall = False
 
@@ -31,30 +35,56 @@ dt   = 0.01 # integration step time [sec]
 Tmax = 10   # simulation time [sec]
 meas_max = 6.0 # max measurement of the range sensor [m]
 
+# vector of measurements
+#sensor_array = np.array([90.]) # array of angles with respect to the x axis
+sensor_array = np.array([90., -90.]) # array of angles with respect to the x axis
+#sensor_array = np.array([90., 45., -45., -90.]) # array of angles with respect to the x axis
+
 # estimator memory variables
 z_est = np.array([[0.], [0.]]) # y, y'
 u_est = 0.
-
-
-# wall y location with respect to x 
-def wall_y_location(x):
+# check via matlab or place some algorithm here to calculate the gains for each (A,C)
+# A = [0 1; 0 0]
+# C = [-1/sin(a1)  0; -1/sin(a2)  0 ....]
+# p = -2*pi*1*[cosd(45)+i*sind(45), -cosd(45)-i*sind(45)]
+# L = place(A',C',p).'
+#L = np.array([[-8.89], [-39.48]]) # [+90]; w=1Hz, zeta=0.7
+L = np.array([[-4.44,   4.44], [-19.74,   19.74]])  # [+90,-90]; w=1Hz, zeta=0.7
+#L = np.array([[-2.96,-2.10,2.10,2.96], [-13.16,-9.31,9.31,13.16]]) # [+90,+45,-45,-90]; w=1Hz, zeta=0.7
+   
+  
+# wall y location with respect to x. y_dir =1 if north wall, y_dir=-1 if south
+def wall_y_location(x, y_dir=1.):
 	# constant for now
 	if(bump_in_wall):
 		if(1.0 < x < 2.0):
-			return 2.0
+			return y_dir*2.0
 	# constant wall
-	return 3.0
+	return y_dir*3.0
 
 # state z has three components: z=[x, y, y'].
 def plant(z, t):
-	# state feedback control (on y-position) is the distance to the wall
-	ideal_meas= wall_y_location(z[0]) - z[1]
-	# get the new noise distribution (because it varies with the nominal meas.)
-	pdf, bins = noise_dist(ideal_meas, a1=.3, a2=0.1, a3=.1, a4=.04, norm_sig=0.1)
-	# only Gaussian noise (for debug)
-	# pdf, bins = noise_dist(ideal_meas, a1=.3, a2=0., a3=0., a4=0., norm_sig=0.1)
-	# sample a new measurement from the inverse cdf using a uniform random number in [0,1]
-	meas      = inverse_transform_sampling(pdf, bins)
+	N_sensors = sensor_array.shape[0]
+	meas = np.zeros( [N_sensors, 1] )
+	for i, sensor in enumerate(sensor_array):
+		north_wall = 1.0 
+		if sensor < 0.:
+			north_wall = -1.0
+		# state feedback control (on y-position) is the distance to the wall
+		ideal_y   = wall_y_location(z[0], y_dir=north_wall) - z[1]
+		if(np.abs(sensor) <= 0.001):
+			# case where there is a sensor heading in x direction
+			# assume infinite wall so no wall is infront
+			meas[i][0] = meas_max
+		else:
+			# get the ideal ray to the wall
+			ideal_meas= ideal_y / np.sin(np.deg2rad(sensor))
+			# get the new noise distribution (because it varies with the nominal meas.)
+			pdf, bins = noise_dist(ideal_meas, a1=.3, a2=0.1, a3=.1, a4=.04, norm_sig=0.1)
+			# only Gaussian noise (for debug)
+			# pdf, bins = noise_dist(ideal_meas, a1=.3, a2=0., a3=0., a4=0., norm_sig=0.1)
+			# sample a new measurement from the inverse cdf using a uniform random number in [0,1]
+			meas[i][0] = inverse_transform_sampling(pdf, bins) 
 
 	# output feedback control
 	u = control(0., meas, z[0])
@@ -66,43 +96,58 @@ def plant(z, t):
 	zdot[2] = 0    + 0    + z[2]      + dt/m * u
 	'''
 	zdot    = z.copy()
-	zdot[0] = const_velocity
-	zdot[1] = z[2]
-	zdot[2] = 1./m * u
+	zdot[0] = const_velocity   # x'    = v_const
+	zdot[1] = z[2]             # y'    = y'
+	zdot[2] = 1./m * u         # m*y'' = u
 	
     # We return z'=[x', y', y''] and measured output y
 	return zdot, meas
 
-# state estimation (pole placement) + state feedback (LQR). x is just for the wall function
-def control(ref, y, x):
+# state estimation (pole placement) + state feedback (LQR). 
+#ref- y to be in. meas- the measurements vector. x- just for the wall function
+def control(ref, meas, x):
 	global z_est
 	global u_est
+	global L
 	
-	#import pdb; pdb.set_trace()
-	# observer gain
-	wn = 2.*np.pi*1. # 1Hz observer
-	xi = 0.7 # damping factor
-	L = np.array([[2.*xi*wn], [wn*wn]]) # pole-placement
+	# observer gain (only for 1 measurement, if you have more, compute in matlab).
+	#wn = 2.*np.pi*1. # 1Hz observer
+	#xi = 0.7 # damping factor
+	#LL = np.array([[-2.*xi*wn], [-wn*wn]]) # pole-placement
 	
-	y_est = wall_y_location(x)-z_est[0][0]
+	# create the range estimation for each sensor
+	N_sensors = meas.shape[0]
+	meas_est = np.zeros( [N_sensors, 1] )
+	for i, sensor in enumerate(sensor_array):
+		north_wall = 1.0 
+		if sensor < 0.:
+			north_wall = -1.0
+		y_est = wall_y_location(x, y_dir=north_wall) - z_est[0][0]
+		if(np.abs(sensor) < 0.001):
+			meas_est[i][0] = np.inf
+		else:
+			meas_est[i][0] = y_est / np.sin(np.deg2rad(sensor))
+		
 	#  Luenberger Observer
 	f = np.array([[z_est[1][0]], \
 				  [1./m * u_est] ])
-	zdot_est = f - L * (y - y_est)
-	z_est = z_est + dt * zdot_est
+	# Estimator equations
+	zdot_est = f + L.dot(meas - meas_est)
+	# Euler integration
+	z_est    = z_est + dt * zdot_est
 	
 	# now we can do state feedback control (x-axis doesn't really play here)
 	Af = np.array([[0.,1.], [0.,0.]])
 	Bf = np.array([[0.], [1./m]])
-	Q = np.eye(2)
-	R = np.eye(1)
+	Q  = np.eye(2)
+	R  = np.eye(1)
 	Kf, Qf = LinearQuadraticRegulator(Af, Bf, Q, R)
 	
 	u_est = ref - Kf.dot(z_est)[0][0]
+	# do nothing (for debug)
+	#u_est = 0.
 	
 	return u_est
-	# do nothing (for debug)
-	#return 0.
 
 # implements the noise pdf of the beam model and allows some parameters to be set
 def noise_dist(x_true, a1=1., a2=1., a3=1., a4=.1, norm_sig=1., exp_lambda=1., uni_delta=0.5, plot=False):
@@ -168,8 +213,11 @@ def simulate_d():
 	# We want to evaluate the system on N linearly spaced times between t=0 and t=10.
 	t_vec = np.arange(0., Tmax, dt)
 	# The initial position is (0, 0).
-	z = np.zeros(3)
+	#z = np.array([0., 0., 0.])
+	z = np.array([0., 1., 0.])
 	z_save, z_est_save, u_save, meas_save = [], [], [], []
+	
+	N_sensors = sensor_array.shape[0]
 
 	# We simulate the system and evaluate z
 	for t in t_vec:
@@ -180,12 +228,12 @@ def simulate_d():
 		# save for telemetry
 		if(len(z_save) == 0):
 			z_save = np.array([z])
-			z_est_save = np.array(z_est.reshape((1,2)))
-			meas_save = np.array([meas])
+			z_est_save = np.array(z_est.reshape((1,2))) # only save y,y' at the moment
+			meas_save = np.array(meas.reshape((1,N_sensors)))
 			u_save = np.array([u_est])
 		else:
 			z_save = np.vstack([z_save, z])
-			meas_save = np.vstack([meas_save, meas])
+			meas_save = np.vstack([meas_save, meas.reshape((1,N_sensors))])
 			z_est_save = np.vstack([z_est_save, z_est.reshape((1,2))])
 			u_save = np.vstack([u_save, u_est])
 	
@@ -207,7 +255,13 @@ def single_run():
 	ax1.plot(t, state[:, 1], label='$y(t)$')
 	ax1.plot(t, state_est[:, 0], label='$\^y(t)$')
 	ax2.plot(t, controls[:], label='$u_y(t)$', alpha=0.2)
-	ax1.plot(t, 3. - meas[:], label='meas(t)', marker='o',linestyle='', alpha=0.2)
+	
+	for i, sensor in enumerate(sensor_array):
+		north_wall = 1.0 
+		if sensor < 0.:
+			north_wall = -1.0
+		ax1.plot(t, north_wall*3. - meas[:,i]*np.sin(np.deg2rad(sensor)), \
+				label='$\^y(sensor_%d)$'%i, marker='o', linestyle='', alpha=0.2)
 	
 	# walls
 	n_wall, s_wall = [], []
@@ -220,9 +274,9 @@ def single_run():
 	#ax.plot([t[0], t[-1]], [-3., -3.], label='south wall', color='k', linewidth=6)
 	ax1.plot(t, s_wall, label='south wall', color='k', linewidth=6)
 	ax1.legend()
-	ax1.set_title('state vs. time')
+	ax1.set_title('state vs. time (%d sensors)'%(len(sensor_array)))
 	ax2.legend()
-	ax1.set_title('controls vs. time')
+	ax2.set_title('controls vs. time')
 	ax1.set_xlim(t[0], t[-1])
 	ax1.set_ylim(-np.max(np.abs(n_wall)), np.max(np.abs(n_wall)))
 	
@@ -258,5 +312,5 @@ def multi_run(n=10):
 
 
 if __name__ == "__main__":
-	#single_run()
-	multi_run()
+	single_run()
+	#multi_run()
