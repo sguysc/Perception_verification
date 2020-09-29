@@ -7,8 +7,8 @@ Created on Tue Sep 15 10:37:53 2020
 
 Implements a dynamical system of a robot (double integrator) with a range sensor measuring
 its position relative to a wall. The measurements are not Normally distributed, but characterized
-with the "beam model". The aim is to see the reachable sets of the system under given controls
-and this noise.
+with the "beam model" (see "Probablistic Robotics" chapter 6). The aim is to see the reachable 
+sets of the system under given controls and this noise.
 """
 
 # general stuff
@@ -24,9 +24,13 @@ from scipy import stats
 #	# newer version of drake
 from pydrake.systems.controllers import LinearQuadraticRegulator
 
+# my helper classes
+from map_generator import MapGenerator
+
 # some behavioral control switches
 continuous = False
-bump_in_wall = False
+#'const', 'linear', 'saw', 'sine', 'square', 'file'
+Map = MapGenerator(north_type='square', south_type='saw', center_type='const')
 
 # parameters of simulation
 const_velocity = 0.5 # in x direction [m/sec]
@@ -51,16 +55,13 @@ u_est = 0.
 #L = np.array([[-8.89], [-39.48]]) # [+90]; w=1Hz, zeta=0.7
 L = np.array([[-4.44,   4.44], [-19.74,   19.74]])  # [+90,-90]; w=1Hz, zeta=0.7
 #L = np.array([[-2.96,-2.10,2.10,2.96], [-13.16,-9.31,9.31,13.16]]) # [+90,+45,-45,-90]; w=1Hz, zeta=0.7
-   
-  
+
 # wall y location with respect to x. y_dir =1 if north wall, y_dir=-1 if south
 def wall_y_location(x, y_dir=1.):
-	# constant for now
-	if(bump_in_wall):
-		if(1.0 < x < 2.0):
-			return y_dir*2.0
-	# constant wall
-	return y_dir*3.0
+	if(y_dir > 0.):
+		return Map.north_wall(x)
+	else:
+		return Map.south_wall(x)
 
 # state z has three components: z=[x, y, y'].
 def plant(z, t):
@@ -87,7 +88,7 @@ def plant(z, t):
 			meas[i][0] = inverse_transform_sampling(pdf, bins) 
 
 	# output feedback control
-	u = control(0., meas, z[0])
+	u = control(Map.center_line(z[0]), meas, z[0])
 	
 	'''
 	# discretized
@@ -255,20 +256,21 @@ def single_run():
 	ax1.plot(t, state[:, 1], label='$y(t)$')
 	ax1.plot(t, state_est[:, 0], label='$\^y(t)$')
 	ax2.plot(t, controls[:], label='$u_y(t)$', alpha=0.2)
-	
-	for i, sensor in enumerate(sensor_array):
-		north_wall = 1.0 
-		if sensor < 0.:
-			north_wall = -1.0
-		ax1.plot(t, north_wall*3. - meas[:,i]*np.sin(np.deg2rad(sensor)), \
-				label='$\^y(sensor_%d)$'%i, marker='o', linestyle='', alpha=0.2)
-	
+
 	# walls
 	n_wall, s_wall = [], []
 	for i in range(len(t)):
-		n_wall.append( wall_y_location(state[i, 0]) )
-		s_wall.append( -3. )
+		n_wall.append( wall_y_location(state[i, 0], y_dir=1.0) )
+		s_wall.append( wall_y_location(state[i, 0], y_dir=-1.0 ) )
 	
+	for i, sensor in enumerate(sensor_array):
+		if sensor > 0.:
+			ax1.plot(t, n_wall - meas[:,i]*np.sin(np.deg2rad(sensor)), \
+					label='$\^y(sensor_%d)$'%i, marker='o', linestyle='', alpha=0.2)
+		else:
+			ax1.plot(t, s_wall - meas[:,i]*np.sin(np.deg2rad(sensor)), \
+					label='$\^y(sensor_%d)$'%i, marker='o', linestyle='', alpha=0.2)
+
 	#ax.plot([t[0], t[-1]], [3., 3.], label='north wall', color='k', linewidth=6)
 	ax1.plot(t, n_wall, label='north wall', color='k', linewidth=6)
 	#ax.plot([t[0], t[-1]], [-3., -3.], label='south wall', color='k', linewidth=6)
@@ -312,5 +314,6 @@ def multi_run(n=10):
 
 
 if __name__ == "__main__":
+	
 	single_run()
 	#multi_run()
