@@ -27,11 +27,14 @@ class NoiseOptSolver():
 	#     x[k+1] = Ax[k] - BKy[k] = Ax[k] - BK(Cx[k] + n[k])  = (A - BKC)x[k] - BKn[k]
 	# it is assumed for now that y is the full state -> C=eye(n)
 	
-	def __init__(self, A, B, C, K, T, Sigma, x0, x_lb, x_ub, check_states=[]):
+	def __init__(self, A, B, C, K, T, Sigma, x0, x_lb, x_ub, check_states=[], noise_trunc=[]):
 		n = A.shape[0] # n states
 		
 		if(len(check_states)==0):
 			check_states = range(0, n)
+		if(len(noise_trunc)==0):
+			# set default to 3 std's
+			noise_trunc = np.diag(Sigma)**(0.5)*3.
 		
 		invsig = np.linalg.inv(Sigma)
 		#Q = block_diag(*([invsig]*T))  #  [n1,n2,...,nL]*[Q]*[n1;n2;...;nL]
@@ -51,7 +54,11 @@ class NoiseOptSolver():
 					self.n_i = self.prog.NewContinuousVariables(n*prob_len,'n')  
 					# the states as a function of time
 					self.x   = self.prog.NewIndeterminates(n*prob_len,'x')
-
+					
+					# the maximum value allowed for a noise measurement (truncated normal distribution)
+					for i, noise in enumerate(self.n_i):
+						self.prog.AddConstraint(noise, -noise_trunc[i%n], noise_trunc[i%n])
+						
 					# simulate the dynamics forward to obtain the constraints on the states
 					# Drake will convert them to constraints on the decision variables
 					x_t = x0.copy()
@@ -87,9 +94,8 @@ class NoiseOptSolver():
 								if(dv_exist):
 									# the "box"/corridor constraint
 									self.prog.AddConstraint(x_t[state_i][0], x_lb[state_i][0], x_ub[state_i][0])
-
+						
 						# quadratic cost of the log likelihood 
-						#self.prog.AddQuadraticCost(Q, b, self.n_i)
 						self.prog.AddQuadraticCost(invsig, b, self.n_i[ind])
 						
 					# solve the mathematical program
@@ -139,7 +145,7 @@ if __name__ == "__main__":
 	x_lb = np.array([[-3.], [-100.]]) # y, ydot
 	x_ub = np.array([[+3.], [+100.]]) # y, ydot
 	
-	N = NoiseOptSolver(A, B, C, K, T, Sigma, x0, x_lb, x_ub, check_states=[0])
+	N = NoiseOptSolver(A, B, C, K, T, Sigma, x0, x_lb, x_ub, check_states=[0], noise_trunc=[10., 10.])
 	
 	print('maximum likelihood = %.3e\nwhere the noise sequence is:' %(N.max_cost))
 	print(N.noise_seq)
