@@ -27,40 +27,45 @@ class NoiseOptSolver():
 	#     x[k+1] = Ax[k] - BKy[k] = Ax[k] - BK(Cx[k] + n[k])  = (A - BKC)x[k] - BKn[k]
 	# it is assumed for now that y is the full state -> C=eye(n)
 	
-	def __init__(self, A, B, C, K, T, Sigma, x0, x_lb, x_ub):
+	def __init__(self, A, B, C, K, T, Sigma, x0, x_lb, x_ub, check_states=[]):
 		n = A.shape[0] # n states
 		
+		if(len(check_states)==0):
+			check_states = range(0, n)
+		
 		invsig = np.linalg.inv(Sigma)
-		Q = block_diag(*([invsig]*T))  #  [n1,n2,...,nL]*[Q]*[n1;n2;...;nL]
-		b = np.zeros((n*T, 1))
+		#Q = block_diag(*([invsig]*T))  #  [n1,n2,...,nL]*[Q]*[n1;n2;...;nL]
+		b = np.zeros((n, 1))  #n*T
 		
 		costs = []
 		eval_n_is = []
 		
-		for lowhigh in range(2):
-			for problem_no in range(T):
-				for state in range(n):
+		for prob_len in range(1,T):
+			for bound in ['lo', 'hi']:
+				for state in check_states:
 					self.prog  = MathematicalProgram()
-
-					# the noise decision variables
-					self.n_i = self.prog.NewContinuousVariables(n*T,'n')  
+					# the noise decision variables, we search for the first time it falsifies.
+					# to not overconstrain the problem, if we are checking to falsify at t=i,
+					# we do not want more constraints in i:T because maybe a better probability cost will be
+					# that i,i+1,i+2 will go out of bounds, and then i+3 comes back, etc ...
+					self.n_i = self.prog.NewContinuousVariables(n*prob_len,'n')  
 					# the states as a function of time
-					self.x   = self.prog.NewIndeterminates(n*T,'x')
+					self.x   = self.prog.NewIndeterminates(n*prob_len,'x')
 
 					# simulate the dynamics forward to obtain the constraints on the states
 					# Drake will convert them to constraints on the decision variables
 					x_t = x0.copy()
-					for t in range(T):
+					for t in range(1, prob_len+1):
 						# which noise variables affect this step
-						ind = np.arange(t*n, t*n+n)
-						
+						ind = np.arange((t-1)*n, t*n)
+						#import pdb; pdb.set_trace()
 						x_t = (A-B*K.dot(C)).dot(x_t) - B.dot(K).dot(self.n_i[ind].reshape(n,-1))
 						# the falsifying constraint:
-						if(problem_no == t):
+						if(prob_len == t):
 							for state_i in range(n):
 								dv_exist = (len(x_t[state_i][0].GetVariables()) > 0)
 								if(state_i == state and dv_exist):
-									if(lowhigh == 0):
+									if(bound == 'lo'):
 										#print('adding a lower violation constraint state=%d t=%d' %(state_i, t))
 										# hits the lower bound
 										self.prog.AddConstraint(x_t[state_i][0] <= x_lb[state_i][0])
@@ -83,23 +88,25 @@ class NoiseOptSolver():
 									# the "box"/corridor constraint
 									self.prog.AddConstraint(x_t[state_i][0], x_lb[state_i][0], x_ub[state_i][0])
 
-					# quadratic cost of the log likelihood (maybe we need -Q. need to check this)
-					self.prog.AddQuadraticCost(Q, b, self.n_i)
+						# quadratic cost of the log likelihood 
+						#self.prog.AddQuadraticCost(Q, b, self.n_i)
+						self.prog.AddQuadraticCost(invsig, b, self.n_i[ind])
+						
 					# solve the mathematical program
 					result = Solve(self.prog)
 					
 					if(result.is_success()):
 						eval_n_i = result.GetSolution(self.n_i)
-						eval_n_is.append(eval_n_i.reshape(T,n).T)
+						eval_n_is.append(eval_n_i.reshape(prob_len,n).T)
 						# minus because the real cost is -1/2*x'Sx and for the prog I multiply by -1 to get max
-						# this is the true pdf
-						cost = (2.*np.pi)**(-(n*T)/2.) * np.linalg.det(Q)**(-0.5) * \
+						# this is the true multivariate pdf
+						Q = block_diag(*([invsig]*prob_len))  #  [n1,n2,...,nL]*[Q]*[n1;n2;...;nL]
+						cost = (2.*np.pi)**(-(n*prob_len)/2.) * np.linalg.det(Q)**(-0.5) * \
 								np.exp(-0.5*eval_n_i.T.dot(Q).dot(eval_n_i))
 						costs.append(cost)
-						print('found solution (lh/step/state %d/%d/%d)' %(lowhigh, problem_no, state))
-						#import pdb; pdb.set_trace()
+						print('found solution (lh/step/state/cost %s/%d/%d/%.2e)' %(bound, prob_len, state, cost))
 					else:
-						print('nope :( (lh/step/state %d/%d/%d)' %(lowhigh, problem_no, state))
+						print('nope :( (lh/step/state %s/%d/%d)' %(bound, prob_len, state))
 			
 		costs = np.array(costs)
 		if(len(costs)>0):
@@ -132,7 +139,7 @@ if __name__ == "__main__":
 	x_lb = np.array([[-3.], [-100.]]) # y, ydot
 	x_ub = np.array([[+3.], [+100.]]) # y, ydot
 	
-	N = NoiseOptSolver(A, B, C, K, T, Sigma, x0, x_lb, x_ub)
+	N = NoiseOptSolver(A, B, C, K, T, Sigma, x0, x_lb, x_ub, check_states=[0])
 	
 	print('maximum likelihood = %.3e\nwhere the noise sequence is:' %(N.max_cost))
 	print(N.noise_seq)
