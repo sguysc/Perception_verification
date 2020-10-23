@@ -1,0 +1,8 @@
+prefix=/home/cornell/Documents/Projects/Perception_verification/gazebo_sim/install
+
+Name: perception_sim
+Description: Description of perception_sim
+Version: 0.0.1
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: 

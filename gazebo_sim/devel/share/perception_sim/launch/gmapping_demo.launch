@@ -1,0 +1,14 @@
+<launch>
+
+  <arg name="scan_topic"      default="front/scan" />
+
+  <!--- Run gmapping -->
+  <include file="$(find perception_sim)/launch/include/gmapping.launch">
+    <arg name="scan_topic"    value="$(arg scan_topic)" />
+  </include>
+
+
+  <!--- Run Move Base -->
+  <include file="$(find perception_sim)/launch/include/move_base.launch" />
+
+</launch>

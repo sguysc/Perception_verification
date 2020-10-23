@@ -1,0 +1,23 @@
+
+source devel/setup.bash
+
+
+roslaunch perception_sim jackal_world.launch config:=front_laser world_name:='$(find perception_sim)/worlds/ex1_world.world'
+
+./noisy_scan.py 
+
+roslaunch perception_sim amcl_demo.launch scan_topic:="/front/noisy_scan" map_file:='$(find perception_sim)/worlds/ex1_world.yaml'
+
+roslaunch perception_sim view_robot.launch config:=localization
+
+##rosrun jackal_data_collection data_collection.py
+
+
+#navigating with no map:
+roslaunch perception_sim odom_navigation_demo.launch
+roslaunch perception_sim view_robot.launch config:=navigation
+
+#mapping:
+roslaunch perception_sim gmapping_demo.launch scan_topic:="/front/scan"
+roslaunch perception_sim view_robot.launch config:=gmapping
+rosrun map_server map_saver -f mymap

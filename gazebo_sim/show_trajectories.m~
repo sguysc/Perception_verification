@@ -1,0 +1,28 @@
+%%
+
+close all
+clear all
+clc
+
+%%
+X = importdata('telemetry/ex1_2020_10_22_21_47_10.log',';',1);
+data = X.data;
+
+i=1;
+t = data(:,i)-data(1,i); i=i+1;
+x_goal = data(:, i); i=i+1;
+y_goal = data(:, i); i=i+1;
+x_waypoint = data(:,i);i=i+1;
+y_waypoint = data(:,i);i=i+1;
+teta_waypoint = data(:,i);i=i+1;
+x_groundtruth = data(:,i);i=i+1;
+y_groundtruth = data(:,i);i=i+1;
+teta_groundtruth = data(:,i);i=i+1;
+x_perception = data(:,i);i=i+1;
+y_perception = data(:,i);i=i+1;
+teta_perception = data(:,i);i=i+1;
+
+%%
+figure;
+
+plot(t, [x_groundtruth-x_perception, y_groundtruth-y_perception]);
